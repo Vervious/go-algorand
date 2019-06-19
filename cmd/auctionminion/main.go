@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -82,6 +83,14 @@ func writeConfig(cfg minionConfig) error {
 	return nil
 }
 
+func toJsonString(v interface{}) string {
+	str, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(str)
+}
+
 func main() {
 	flag.Parse()
 
@@ -135,6 +144,9 @@ func main() {
 	var ra *auction.RunningAuction
 	curRound := cfg.StartRound
 
+	var totalCurrency uint64
+	var lostToDeposits uint64
+	jsonAnalysisOut := ""
 	for {
 		if ra != nil && curRound > ra.LastRound() {
 			break
@@ -167,6 +179,7 @@ func main() {
 
 				switch note.Type {
 				case auction.NoteParams:
+					fmt.Println("Initializing new auction")
 					if ra != nil {
 						continue
 					}
@@ -197,9 +210,10 @@ func main() {
 							SignedDeposit: note.SignedDeposit,
 						})
 
-						fmt.Printf("[%d] Deposit\n", curRound)
+						fmt.Printf("[%d] Deposit \t%+v\n", curRound, note.SignedDeposit.Deposit.BidderKey)
 					} else {
 						fmt.Printf("[%d] Deposit (invalid), err: %v\n", curRound, err)
+						fmt.Printf("\t\t%+v\n", note.SignedDeposit)
 					}
 
 				case auction.NoteBid:
@@ -215,12 +229,18 @@ func main() {
 							SignedBid: note.SignedBid,
 						})
 
-						fmt.Printf("[%d] Bid\n", curRound)
+						fmt.Printf("[%d] Bid \t%+v\n", curRound, note.SignedBid.Bid.BidderKey)
+						totalCurrency += note.SignedBid.Bid.BidCurrency
+
+						jsonAnalysisOut += fmt.Sprintf("{\"MaxPrice\": %v, \"BidCurrency\": %v},\n", note.SignedBid.Bid.MaxPrice, note.SignedBid.Bid.BidCurrency)
 					} else {
 						fmt.Printf("[%d] Bid (invalid), err: %v\n", curRound, err)
+						fmt.Printf("\t\t%+v\n", note.SignedBid)
+						lostToDeposits += note.SignedBid.Bid.BidCurrency
 					}
 
 				default:
+					fmt.Println("unhandled notes")
 					continue
 				}
 			}
@@ -233,6 +253,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Did not find an auction start transaction for auctionID %d\n", cfg.AuctionID)
 		os.Exit(1)
 	}
+
+	bidOutcomes := ra.Settle(false)
+	digest := crypto.HashObj(bidOutcomes)
+	fmt.Println(base64.StdEncoding.EncodeToString(digest[:]))
+
+	var total uint64
+	for _, x := range bidOutcomes.Outcomes {
+		total += x.AlgosWon * bidOutcomes.Price
+	}
+	fmt.Printf("Total valid bids: \t%d\n", totalCurrency)
+	fmt.Printf("Total lost bids: \t%d\n", lostToDeposits)
+	fmt.Printf("Sum: \t%d\n", totalCurrency + lostToDeposits)
+	fmt.Println(total)
 
 	fmt.Printf("Collected %d auctionmaster inputs\n", len(results))
 
@@ -247,6 +280,7 @@ func main() {
 
 	cfg.AuctionID++
 	cfg.StartRound = ra.LastRound() + 1
-	writeConfig(cfg)
+	//writeConfig(cfg) // don't update for now
 	fmt.Printf("Wrote updated state to %s\n", *stateFile)
+	fmt.Println(jsonAnalysisOut)
 }
