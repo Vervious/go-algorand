@@ -764,7 +764,7 @@ func Transactions(ctx lib.ReqContext, w http.ResponseWriter, r *http.Request) {
 
 	max, err := strconv.ParseUint(r.FormValue("max"), 10, 64)
 	if err != nil {
-		max = 100
+		max = 1000000
 	}
 
 	// Get different params
