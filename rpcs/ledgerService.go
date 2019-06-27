@@ -50,14 +50,15 @@ type LedgerService struct {
 	stop        chan struct{}
 }
 
-// EncodedBlockCert defines how GetBlockBytes encodes a block and its certificate
-type EncodedBlockCert struct {
+// BlockCert defines how GetBlockBytes encodes a block and its certificate
+type BlockCert struct {
 	Block       bookkeeping.Block     `codec:"block"`
 	Certificate agreement.Certificate `codec:"cert"`
 }
 
 // PreEncodedBlockCert defines how GetBlockBytes encodes a block and its certificate,
-// using a pre-encoded Block and Certificate in msgpack format.
+// using a pre-encoded Block and Certificate in msgpack format. A msgpack-encoded
+// PreEncodedBlockCert can be decoded into a BlockCert (above).
 type PreEncodedBlockCert struct {
 	Block       codec.Raw `codec:"block"`
 	Certificate codec.Raw `codec:"cert"`

@@ -207,7 +207,7 @@ func (df *dummyFetcher) GetBlockBytes(ctx context.Context, r basics.Round) (data
 	}
 
 	// Fill in the dummy response with the correct round
-	dummyBlock := EncodedBlockCert{
+	dummyBlock := BlockCert{
 		Block: bookkeeping.Block{
 			BlockHeader: bookkeeping.BlockHeader{
 				Round: r,
