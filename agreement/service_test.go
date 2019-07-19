@@ -394,7 +394,7 @@ func (n *testingNetwork) partition(part ...nodeID) {
 	// different mechanism than n.connected map
 	n.partitionedNodes = make(map[nodeID]bool)
 	for i := 0; i < len(part); i++ {
-		n.partitionedNodes[nodeID(i)] = true
+		n.partitionedNodes[part[i]] = true
 	}
 }
 

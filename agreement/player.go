@@ -255,19 +255,43 @@ func (p *player) handleCheckpointEvent(r routerHandle, e checkpointEvent) []acti
 		}}
 }
 
+// generate the proper ensureAction now that we have both a certificate and a block;
+// also enter a new Round as appropriate immediately after.
+func (p *player) ensureAndEnterNextRound(r routerHandle, e thresholdEvent, payload proposal) []action {
+	if e.t() == certThreshold {
+		cert := Certificate(e.Bundle)
+		a0 := ensureAction{Payload: payload, Certificate: cert}
+		as := p.enterRound(r, e, p.Round+1)
+		actions := append([]action{a0}, as...)
+		return actions
+	}
+	return nil
+}
+
 func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action {
 	r.t.timeR().RecThreshold(e)
-
 	// Special case all cert thresholds: we must not ignore them, because they are the freshest bundle
+	// (thus) this code executes for periods (p - 1, p, p+1, p+2, p+forever).
+	// This code does not execute for future rounds.
 	var actions []action
 	if e.t() == certThreshold {
 		// this threshold must be for p.Round, and originates from the vote SM tree
-		cert := Certificate(e.Bundle)
 		res := stagedValue(*p, r, e.Round, e.Period)
-		a0 := ensureAction{Payload: res.Payload, PayloadOk: res.Committable, Certificate: cert}
-		actions = append(actions, a0)
-		as := p.enterRound(r, e, p.Round+1)
-		return append(actions, as...)
+		if res.Committable {
+			doneActions := p.ensureAndEnterNextRound(r, e, res.Payload)
+			return append(actions, doneActions...)
+		} else {
+			// Note: If we reach this point, we must pin the proposal!
+			ec := r.dispatch(*p, e, proposalMachine, 0, 0, 0)
+
+			// We should still process messages while we wait for the block
+			// In particular, do not generate an ensureAction, since we don't have the payload yet.
+			// Instead, hint to the ledger that we have seen the Certificate, and let the ledger do everything else (if anything).
+			// notably - we can still next vote, and enter into new periods. Having seen a cert threshold
+			// does not constrain our behavior, compared to if we did not receive a certificate.
+			a0 := stageDigestAction{Certificate: Certificate(e.Bundle)}
+			return append(actions, a0)
+		}
 	}
 
 	// We might receive a next threshold event for the previous period due to fast-forwarding or a soft threshold.
@@ -533,7 +557,19 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 		actions = append(actions, a)
 
 		if ef.t() == proposalCommittable && p.Step <= cert {
-			actions = append(actions, p.issueCertVote(r, ef.(committableEvent)))
+			// check if we received a cert threshold
+			res := r.dispatch(*p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0)
+			freshestRes := res.(freshestBundleEvent) // panic if violate postcondition
+			if freshestRes.Ok && freshestRes.Event.t() == certThreshold {
+				// we are done, ensure
+				res := stagedValue(*p, r, p.Round, p.Period)
+				doneActions := p.ensureAndEnterNextRound(r, freshestRes.Event, res.Payload)
+				actions = append(actions, doneActions...)
+			} else {
+				// we did not receive a cert threshold, but the event is committable. This means
+				// we have seen a soft threshold.
+				actions = append(actions, p.issueCertVote(r, ef.(committableEvent)))
+			}
 		}
 		return actions
 

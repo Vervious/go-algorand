@@ -75,7 +75,7 @@ type proposalTracker struct {
 	// the lowest credential seen by the proposalTracker.
 	Freezer proposalSeeker
 	// Staging holds the proposalValue of the softThreshold delivered to
-	// this proposalTracker (if any).
+	// this proposalTracker (if any), or the certThreshold value.
 	Staging proposalValue
 }
 
@@ -164,7 +164,8 @@ func (t *proposalTracker) handle(r routerHandle, p player, e event) event {
 		t.Freezer = t.Freezer.freeze()
 		return e
 
-	case softThreshold:
+	case softThreshold, certThreshold:
+		// we must also stage for certThreshold
 		e := e.(thresholdEvent)
 		t.Staging = e.Proposal
 
