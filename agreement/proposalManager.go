@@ -59,7 +59,11 @@ func (m *proposalManager) handle(r routerHandle, p player, e event) event {
 		return m.handleMessageEvent(r, p, e.(filterableMessageEvent))
 	case roundInterruption:
 		return m.handleNewRound(r, p, e.(roundInterruptionEvent).Round)
-	case certThreshold:
+	case newRound:
+		// is this dangerous?
+		// yes.
+	case certThreshold: // TODO: need to feed in two different events - one for new round, one for certThreshold staging
+		// we need to pipe in two different events.
 		return m.handleNewRound(r, p, e.(thresholdEvent).Round+1)
 	case softThreshold:
 		e := e.(thresholdEvent)

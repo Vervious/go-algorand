@@ -76,6 +76,10 @@ func (tracker *voteTracker) count(proposal proposalValue) uint64 {
 	return tracker.Counts[proposal].Count + tracker.EquivocatorsCount
 }
 
+func (tracker *voteTracker) t() {
+
+}
+
 // A voteTracker handles the voteAcceptedEvent and voteFilterRequestEvents.  It returns either an event
 // of type none, or it returns an event of type {soft,cert,next}Threshold, or it
 // returns a FilteredEvent saying that the event was not processed (if it were a
@@ -300,7 +304,7 @@ func (tracker *voteTracker) overThreshold(proto config.ConsensusParams, step ste
 	for proposal := range tracker.Counts {
 		if step.reachesQuorum(proto, tracker.count(proposal)) {
 			if ok {
-				logging.Base().Panicf("voteTracker: more than value reached a threhsold in a given step: %v; %v", res, proposal)
+				logging.Base().Panicf("voteTracker: more than value reached a threshold in a given step: %v; %v", res, proposal)
 			}
 			res = proposal
 			ok = true

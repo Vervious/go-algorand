@@ -301,9 +301,10 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 		}
 		return emptyEvent{}
 
-	case softThreshold:
+	case softThreshold, certThreshold:
+		// both thresholds need to pin blocks; else we will filter the payloads and never vote/ensure
 		te := e.(thresholdEvent)
-		// in particular, this will set te.Period.Staging = val(softThreshold)
+		// in particular, this will set te.Period.Staging = val(softThreshold) (or certThreshold)
 		// as a consequence, only val(softThreshold) will generate proposalAccepted in the future
 		// therefore store.Relevant[te.Period] will not be reset
 		e := r.dispatch(p, e, proposalMachinePeriod, te.Round, te.Period, 0).(proposalAcceptedEvent)
@@ -316,12 +317,13 @@ func (store *proposalStore) handle(r routerHandle, p player, e event) event {
 			}
 		}
 		// an assembler may not exist - we should add a new one, if it doesn't
-		// we don't pin a value here - new period logic should have done that if we fast forward
 		ea := store.Assemblers[e.Proposal]
 		store.Assemblers[e.Proposal] = ea
 		store.Relevant[te.Period] = e.Proposal
+		// new period logic should have pinned a proposal already if we fast forward
+		// in the case of a cert threshold, we don't need to pin a value since we never increase periods
 		store.trim(p)
-		// no subsequent softThreshold logic uses these fields, but for completeness...
+		// no subsequent softThreshold logic uses these fields, but for certThreshold and completeness...
 		e.Payload = ea.Payload
 		e.PayloadOk = ea.Assembled
 		return e

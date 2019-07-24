@@ -255,19 +255,64 @@ func (p *player) handleCheckpointEvent(r routerHandle, e checkpointEvent) []acti
 		}}
 }
 
+// generate the proper ensureAction now that we have both a certificate and a block;
+// also enter a new Round as appropriate immediately after.
+func (p *player) ensureAndEnterNextRound(r routerHandle, e thresholdEvent, payload proposal) []action {
+	if e.t() == certThreshold {
+		cert := Certificate(e.Bundle)
+		// todo: check that payload is not empty
+		a0 := ensureAction{Payload: payload, Certificate: cert}
+		as := p.enterRound(r, e, p.Round+1)
+		actions := append([]action{a0}, as...)
+		return actions
+	}
+	return nil
+}
+
 func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action {
 	r.t.timeR().RecThreshold(e)
-
 	// Special case all cert thresholds: we must not ignore them, because they are the freshest bundle
+	// (thus) this code executes for periods (p - 1, p, p+1, p+2, p+forever).
+	// This code does not execute for future rounds.
 	var actions []action
 	if e.t() == certThreshold {
 		// this threshold must be for p.Round, and originates from the vote SM tree
-		cert := Certificate(e.Bundle)
-		res := stagedValue(*p, r, e.Round, e.Period)
-		a0 := ensureAction{Payload: res.Payload, PayloadOk: res.Committable, Certificate: cert}
-		actions = append(actions, a0)
-		as := p.enterRound(r, e, p.Round+1)
-		return append(actions, as...)
+		res := stagedValue(*p, r, e.Round, e.Period) // todo: instead of checking staged we should just check if it is pinned
+		if res.Committable {
+			doneActions := p.ensureAndEnterNextRound(r, e, res.Payload)
+			return append(actions, doneActions...)
+		} else {
+			// todo: this could also be for an nonstaged proposal from the previous period.
+			// the relevant proposal is for a future period, perhaps. It's possible we've already dropped the payload once.
+			// Thus the proposalTracker has not been built and nothing is staged.
+			// Also note that we cannot model it as if we dropped the certThreshold message: it is
+			// written to the freshest bundle, and filters out all future threshold events from this round.
+			// As a result, while player will continue to relay votes, it will drop bundles, since none will "cause a significant
+			// state change," and never move periods, and thus relay for a constrained period of time.
+			// Certificate -> majority have block -> other nodes could move onto next period
+
+			// todo we might not even need to pin? or maybe just pin, but we certainly don't need to stage.
+			// todo all we need to do is make sure we don't filter out the payload
+			// We enter a new "waiting for cert" state.
+
+			// Note: If we reach this point, we must pin the proposal!
+			ec := r.dispatch(*p, e, proposalMachine, 0, 0, 0)
+			if ec.t() != proposalCommittable {
+				// invariant: a cert thresh will pin the value. Does this hold true for... futre periods?
+				// todo: what if a soft threshold comes in after a cert threshold? Make sure we still cert vote.\
+				// todo: error, panic, complain
+			}
+
+			// We should still process messages while we wait for the block
+			// In particular, do not generate an ensureAction, since we don't have the payload yet.
+			// Instead, hint to the ledger that we have seen the Certificate, and let the ledger do everything else (if anything).
+			// notably - we can still next vote, and enter into new periods. Having seen a cert threshold
+			// does not constrain our behavior, compared to if we did not receive a certificate.
+			a0 := stageDigestAction{Certificate: Certificate(e.Bundle)}
+			return append(actions, a0)
+		}
+		// todo
+		return p.enterPeriod(r, e, e.Period)
 	}
 
 	// We might receive a next threshold event for the previous period due to fast-forwarding or a soft threshold.
@@ -532,6 +577,22 @@ func (p *player) handleMessageEvent(r routerHandle, e messageEvent) (actions []a
 		a := relayAction(e, protocol.ProposalPayloadTag, compoundMessage{Proposal: up, Vote: uv})
 		actions = append(actions, a)
 
+		// If the payload is valid, check it against any received cert threshold.
+		// Of course, this should only trigger for payloadVerified clause.
+		// This block is merely an liveness optimization; omitting it is fine, but forces reliance
+		// on a roundInterruptedEvent to ensure progress after seeing a certThreshold without a payload.
+		// If we eliminate fetchByDigest, this means complete dependence on catchup even in cases where
+		// the payload is simply late.
+		if ef.t() == proposalCommittable || ef.t() == payloadAccepted {
+			freshestRes := r.dispatch(*p, freshestBundleRequestEvent{}, voteMachineRound, p.Round, 0, 0).(freshestBundleEvent)
+			if freshestRes.Ok && freshestRes.Event.t() == certThreshold {
+				if freshestRes.Event.Proposal == e.Input.Proposal.value() {
+					doneActions := p.ensureAndEnterNextRound(r, freshestRes.Event, e.Input.Proposal)
+					actions = append(actions, doneActions...)
+					return actions
+				}
+			}
+		}
 		if ef.t() == proposalCommittable && p.Step <= cert {
 			actions = append(actions, p.issueCertVote(r, ef.(committableEvent)))
 		}
